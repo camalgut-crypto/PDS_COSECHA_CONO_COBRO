@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cosechas vs Cobro</title>
+  <link rel="icon" href="img/isotipo_full.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=2026111902">
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <div class="lado">
+      <img class="logo" src="img/logo_claro.png" alt="Instacredit">
+      <div><h1 id="titLogin">Cosechas <span>vs Cobro</span></h1><p id="subLogin">Originación y cobranza · Nicaragua<br>Cosecha, cartera activa, primeros pagos y cono de cobranza</p></div>
+      <img class="mascota" src="img/prestamito_leyendo.png" alt="">
+    </div>
+    <form id="flog">
+      <h2>Ingresar</h2>
+      <p class="muted small">Escriba su usuario tal como se lo entregaron (su nombre completo). Si usa Tiempos DAC o Auditores, es el mismo usuario y la misma contraseña.</p>
+      <label for="lu">Usuario</label><input id="lu" autocomplete="username" required>
+      <label for="lp">Contraseña</label><input id="lp" type="password" autocomplete="current-password" required>
+      <p id="lmsg" class="small error-txt"></p>
+      <button class="btn" style="width:100%">Entrar</button>
+    </form>
+    <form id="fclave" hidden>
+      <h2>Cambie su contraseña</h2>
+      <p class="muted small">Está usando la contraseña genérica. Elija una contraseña propia de al menos 8 caracteres para continuar.</p>
+      <label for="cn1">Nueva contraseña</label><input id="cn1" type="password" autocomplete="new-password" required>
+      <label for="cn2">Repita la nueva contraseña</label><input id="cn2" type="password" autocomplete="new-password" required>
+      <p id="cmsg" class="small error-txt"></p>
+      <button class="btn" style="width:100%">Guardar y entrar</button>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <header class="top">
+      <img src="img/logo_claro.png" alt="Instacredit">
+      <div class="tit" id="titApp">Cosechas <span>vs Cobro</span></div>
+      <div class="acciones">
+        <span id="ultima" class="small"></span>
+        <button id="btnActualizar" class="btn sec">Actualizar</button>
+        <button id="btnDescargar" class="btn" hidden>Descargar data</button>
+        <span class="yo"><span id="yoNombre"></span> <span class="chip" id="yoRol"></span></span>
+        <button id="btnClave" class="btn sec mini">Cambiar contraseña</button>
+        <button id="btnSalir" class="btn sec mini">Salir</button>
+      </div>
+    </header>
+    <nav class="tabs" id="tabs"></nav>
+    <main>
+      <div id="aviso" class="aviso" hidden></div>
+      <div id="cargando" class="cargando" hidden><img src="img/prestamito_pensando.png" alt=""><p>Cargando datos…</p></div>
+
+      <div id="vistaDatos">
+        <div class="filtros" id="filtros"></div>
+        <div class="filtros mas" id="filtrosMas" hidden></div>
+        <div class="chips" id="chips" hidden></div>
+        <div class="segctl" id="segCtl" hidden></div>
+        <section class="kpis" id="kpis"></section>
+        <section class="graficos" id="graficos"></section>
+        <section id="armarCaja" class="panel armar" hidden>
+          <div class="panel-tit">
+            <h3>Arme su gráfico o tabla</h3>
+            <span class="small muted">Elija los campos y la medida. Usa los filtros aplicados en la pestaña y queda guardado en este navegador para su usuario.</span>
+          </div>
+          <form id="farmar" class="filtros farmar"></form>
+          <p id="armVacio" class="small muted">Todavía no ha armado ninguno. Ejemplo: Tipo «Barras apiladas», Agrupar por «Producto Madre», Separar por «Mora Actual», Medida «Suma de Saldo pagaré inicial».</p>
+          <div class="graficos" id="misGraficos"></div>
+        </section>
+        <section id="pivCaja" class="panel" hidden>
+          <div class="panel-tit">
+            <h3 id="pivTit"></h3>
+            <label class="small">Mostrar <select id="pivMed"></select></label>
+          </div>
+          <p class="small muted nota-piv">Clic en un año para abrirlo o cerrarlo; clic en un mes o en una celda para filtrar la pestaña. Al pasar el puntero sobre una celda se ven la cantidad, el monto y el % del total.</p>
+          <div class="tabla-caja"><table class="piv"><thead id="pivHead"></thead><tbody id="pivBody"></tbody></table></div>
+        </section>
+        <section id="tablaCaja" class="panel" hidden>
+          <div class="panel-tit">
+            <h3 id="tablaTit"></h3>
+            <label class="small">Ver por <select id="tablaPor"></select></label>
+          </div>
+          <div class="tabla-caja"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+        </section>
+      </div>
+
+      <div id="vistaAdmin" hidden>
+        <div class="panel">
+          <h3>Nuevo usuario</h3>
+          <form id="fnuevo" class="filtros">
+            <label>Nombre completo <input id="nNombre" required placeholder="Nombre Apellido Apellido"></label>
+            <label>Perfil <select id="nRol"></select></label>
+            <button class="btn">Crear usuario</button>
+          </form>
+          <p class="small muted">El usuario ingresa con su nombre completo y la contraseña inicial <b>12345678</b>; la primera vez la app le pide cambiarla. Si la persona ya usa Tiempos DAC o Auditores, solo se le da acceso y conserva su contraseña.</p>
+          <ul class="small muted perfiles">
+            <li><b>Administrador:</b> todas las pestañas con tablas, descarga, preguntas y usuarios.</li>
+            <li><b>Gerencia:</b> todas las pestañas, solo gráficos; puede descargar la data.</li>
+            <li><b>Cobro:</b> Primeros Pagos y Cartera Activa (en la herramienta de PD's: seguimiento, mora por cuota y cosecha); puede descargar la data.</li>
+            <li><b>Comercial:</b> Primeros Pagos (en la herramienta de PD's: seguimiento, mora por cuota y cosecha).</li>
+            <li class="nota-u">Los usuarios y perfiles son los mismos en Cosechas vs Cobro y en PD's, Cosecha y Cono de Cobro.</li>
+          </ul>
+        </div>
+        <div class="tabla-caja">
+          <table>
+            <thead><tr><th>Usuario (nombre completo)</th><th>Perfil</th><th>Activo</th><th></th></tr></thead>
+            <tbody id="tusuarios"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <section id="preguntas" class="panel preguntas">
+        <div class="panel-tit">
+          <h3>Pregúntele a los datos</h3>
+          <span class="small muted">Arme la pregunta con las listas. Responde con los datos de esta pestaña y los filtros que tenga aplicados.</span>
+        </div>
+        <div id="chat" class="chat"></div>
+        <form id="fguiada" class="fguiada"></form>
+        <div class="sugerencias" id="sugerencias"></div>
+        <form id="fpregunta" class="fpregunta" hidden>
+          <input id="pregunta" maxlength="500" placeholder="Ej.: ¿Qué sucursal tiene la peor mora 30+ en las cosechas de los últimos 6 meses?" required>
+          <button class="btn" id="btnPreguntar">Preguntar</button>
+        </form>
+        <div class="sugerencias" id="sugIA" hidden></div>
+      </section>
+    </main>
+  </div>
+  <div id="tip" class="tip" hidden></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.99.3/dist/umd/supabase.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="config.js?v=2026111902"></script>
+  <script src="app.js?v=2026111902"></script>
+</body>
+</html>
