@@ -182,7 +182,7 @@ table.piv td.tot { font-weight: 700; }
 .mpanel .macc button { border: 1px solid var(--borde); background: #fff; color: var(--navy); border-radius: 6px; padding: 3px 7px; font-size: 11px; cursor: pointer; }
 .mpanel .macc button:hover { background: var(--verde-10); }
 .mpanel .mlista { max-height: 280px; overflow: auto; display: grid; gap: 1px; }
-.mpanel .mop { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; font-size: 13px; color: var(--texto); font-weight: 400; cursor: pointer; white-space: nowrap; }
+.mpanel .mop { display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; font-size: 13px; color: var(--texto); font-weight: 400; cursor: pointer; white-space: nowrap; }
 .mpanel .mop:hover { background: var(--verde-10); }
 @media (max-width: 760px) { .multi, .multi .mbtn { width: 100%; max-width: none; } .mpanel { max-width: none; width: 100%; } }
 
