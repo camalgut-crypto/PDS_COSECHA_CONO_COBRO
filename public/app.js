@@ -257,34 +257,35 @@ function opciones(D, c) { return D.dic[c] ? [...D.dic[c]].sort((a, b) => a.local
 function pintarFiltros(D) {
   const cono = S.tab === 'cono';
   const sel = (c, t, vals, actual) => `<label class="${actual ? 'activo' : ''}">${t}<select data-f="${c}"><option value="">Todos</option>${vals.map(v => `<option${v === actual ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
-  if (cono) {
-    const G = D.gestiones;
-    const dias = G.dic.dia.slice().sort();
-    $('filtros').innerHTML = `<label>Desde<select data-c="desde"><option value="">Inicio del mes</option>${dias.map(d => `<option value="${d}"${d === S.cono.desde ? ' selected' : ''}>${fDia(d)}</option>`).join('')}</select></label>`
-      + `<label>Hasta<select data-c="hasta"><option value="">Hoy</option>${dias.map(d => `<option value="${d}"${d === S.cono.hasta ? ' selected' : ''}>${fDia(d)}</option>`).join('')}</select></label>`
-      + Object.entries(CONO_DIMS).map(([c, t]) => sel(c, t, opciones(G, c), S.cono[c]).replace('data-f=', 'data-c=')).join('')
-      + '<div class="acciones-f"><button type="button" class="btn lin mini" id="limpiar">Limpiar filtros</button></div>';
-    $('filtrosMas').hidden = true;
-    pintarChips();
-    return;
-  }
   // Selección múltiple: botón con lo elegido y panel con casillas (y buscador si la lista es larga)
-  const selD = c => {
-    const vals = c === 'mes_desembolso' ? (D.dic[c] || []).slice().sort().reverse() : opciones(D, c);
+  const selD = (c, T = D) => {
+    const F = cono ? S.cono : S.f;
+    const vals = c === 'mes_desembolso' ? (T.dic[c] || []).slice().sort().reverse() : opciones(T, c);
     const fmt = c === 'mes_desembolso' ? fMes : v => v;
-    const elegidos = S.f[c] || [];
+    const elegidos = F[c] || [];
     const txt = !elegidos.length ? 'Todos' : elegidos.length === 1 ? fmt(elegidos[0]) : `${elegidos.length} seleccionados`;
     const abierto = S.abierto === c;
     const q = (S.busca || '').toLowerCase();
     const panel = !abierto ? '' : `<div class="mpanel">${vals.length > 8 ? `<input class="mbusca" placeholder="Buscar…" value="${esc(S.busca || '')}">` : ''}`
       + `<div class="macc"><button type="button" data-mvis="${c}">Marcar los visibles</button><button type="button" data-mtodos="${c}">Todos (quitar filtro)</button></div>`
       + `<div class="mlista">${vals.map(v => `<label class="mop"${q && !String(fmt(v)).toLowerCase().includes(q) ? ' hidden' : ''}><input type="checkbox" data-mval="${esc(v)}"${elegidos.includes(v) ? ' checked' : ''}> ${esc(fmt(v))}</label>`).join('')}</div></div>`;
-    return `<div class="multi${elegidos.length ? ' activo' : ''}" data-multi="${c}"><span class="lbl">${DIM[c]}</span><button type="button" class="mbtn" title="${esc(elegidos.map(fmt).join(', '))}">${esc(txt)}</button>${panel}</div>`;
+    return `<div class="multi${elegidos.length ? ' activo' : ''}" data-multi="${c}"><span class="lbl">${DIM[c] || CONO_DIMS[c]}</span><button type="button" class="mbtn" title="${esc(elegidos.map(fmt).join(', '))}">${esc(txt)}</button>${panel}</div>`;
   };
-  $('filtros').innerHTML = FILTROS_PRINCIPALES.filter(c => D.dic[c]).map(selD).join('')
+  if (cono) {
+    const G = D.gestiones;
+    const dias = G.dic.dia.slice().sort();
+    $('filtros').innerHTML = `<label>Desde<select data-c="desde"><option value="">Inicio del mes</option>${dias.map(d => `<option value="${d}"${d === S.cono.desde ? ' selected' : ''}>${fDia(d)}</option>`).join('')}</select></label>`
+      + `<label>Hasta<select data-c="hasta"><option value="">Hoy</option>${dias.map(d => `<option value="${d}"${d === S.cono.hasta ? ' selected' : ''}>${fDia(d)}</option>`).join('')}</select></label>`
+      + Object.keys(CONO_DIMS).map(c => selD(c, G)).join('')
+      + '<div class="acciones-f"><button type="button" class="btn lin mini" id="limpiar">Limpiar filtros</button></div>';
+    $('filtrosMas').hidden = true;
+    pintarChips();
+    return;
+  }
+  $('filtros').innerHTML = FILTROS_PRINCIPALES.filter(c => D.dic[c]).map(c => selD(c)).join('')
     + `<div class="acciones-f"><button type="button" class="btn lin mini" id="verMas">${S.mas ? 'Menos filtros' : 'Más filtros'}</button><button type="button" class="btn lin mini" id="limpiar">Limpiar filtros</button></div>`;
   $('filtrosMas').hidden = !S.mas;
-  $('filtrosMas').innerHTML = FILTROS_MAS.filter(c => D.dic[c]).map(selD).join('');
+  $('filtrosMas').innerHTML = FILTROS_MAS.filter(c => D.dic[c]).map(c => selD(c)).join('');
   pintarChips();
 }
 
@@ -312,7 +313,7 @@ function pintarChips() {
 function filtrarDesdeGrafico(valores) {
   const cono = S.tab === 'cono';
   const F = cono ? S.cono : S.f;
-  const lista = k => !cono && !k.startsWith('_');   // fuera del cono los filtros son listas (selección múltiple)
+  const lista = k => !k.startsWith('_') && k !== 'desde' && k !== 'hasta';   // filtros de listas (selección múltiple)
   const igual = (k, v) => (lista(k) ? Array.isArray(F[k]) && F[k].length === 1 && F[k][0] === v : F[k] === v);
   const ya = Object.entries(valores).every(([k, v]) => igual(k, v));
   for (const [k, v] of Object.entries(valores)) {
@@ -323,9 +324,11 @@ function filtrarDesdeGrafico(valores) {
   pintar();
 }
 
+const filtrosTab = () => (S.tab === 'cono' ? S.cono : S.f);
 function multiCambio(c, vals) {
-  if (vals.length) S.f[c] = vals; else delete S.f[c];
-  if (c === 'mora') delete S.f._grupo;
+  const F = filtrosTab();
+  if (vals.length) F[c] = vals; else delete F[c];
+  if (c === 'mora') delete F._grupo;
   pintar();
 }
 
@@ -339,7 +342,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.mval !== undefined) {
-    const c = t.closest('[data-multi]').dataset.multi, act = new Set(S.f[c] || []);
+    const c = t.closest('[data-multi]').dataset.multi, act = new Set(filtrosTab()[c] || []);
     if (t.checked) act.add(t.dataset.mval); else act.delete(t.dataset.mval);
     return multiCambio(c, [...act]);
   }
@@ -356,7 +359,7 @@ document.addEventListener('click', e => {
   if (mt) multiCambio(mt.dataset.mtodos, []);
   const mvis = e.target.closest('[data-mvis]');
   if (mvis) {
-    const c = mvis.dataset.mvis, act = new Set(S.f[c] || []);
+    const c = mvis.dataset.mvis, act = new Set(filtrosTab()[c] || []);
     mvis.closest('.mpanel').querySelectorAll('.mop:not([hidden]) input').forEach(i => act.add(i.dataset.mval));
     multiCambio(c, [...act]);
   }
@@ -804,13 +807,13 @@ function reglasFPD(D, idx) {
 const SEG_IND = [
   { g: 'Resultado', id: 'inc', d: 'Saldo pagaré de las cuotas que al corte tienen 1 o más cuotas vencidas en MCCollect ÷ saldo pagaré de las cuotas del mes ya vencidas. Al cierre es el indicador oficial (foto del día 1 del mes siguiente).', t: 'Incumplimiento 1PD (indicador oficial)', r: ['pd'], mejor: 'bajo', f: fP },
   { g: 'Resultado', id: 'm5', d: 'Se toman las cuotas que ya cumplieron 6 días hábiles (lunes a sábado, sin feriados) desde su vencimiento. Es el % que seguía con cuota vencida el 6.º día hábil, es decir, después de 5 días hábiles completos en mora. Se compara igual en todos los meses.', t: 'Mora a 5 días hábiles del vencimiento', r: ['m5'], mejor: 'bajo', f: fP },
+  { g: 'Resultado', id: 'solo', d: '% de cobranza «Paga solo»: saldo pagaré de las cuotas ya vencidas que al corte no están en mora y que nunca tuvieron una sola gestión (ni SMS, ni predictivo, ni gestor, ni visita) desde 12 días antes del vencimiento hasta el corte ÷ saldo pagaré de las cuotas ya vencidas.', t: '% de cobranza Paga Solo (sin ninguna gestión)', r: ['solo'], mejor: 'alto', f: fP },
   { g: 'Oportunidad', id: 'prev', d: '% de las cuotas vencidas que recibieron al menos una gestión de un gestor (llamada, WhatsApp o visita; no cuentan SMS ni predictivo) en los 3 días hábiles anteriores a su vencimiento.', t: 'Gestión preventiva (3 días hábiles previos)', r: ['prev'], mejor: 'alto', f: fP },
   { g: 'Oportunidad', id: 'm1', d: '% de las cuotas vencidas que el primer día hábil después del vencimiento todavía tenían la cuota vencida (no pagaron a tiempo).', t: 'En mora el primer día hábil después del vencimiento', r: ['m1'], mejor: 'bajo', f: fP },
   { g: 'Oportunidad', id: 'gd1', d: 'De las cuentas en mora el primer día hábil, % que recibió una gestión de gestor ese mismo día.', t: 'Gestionadas el primer día hábil de mora', r: ['gd1'], mejor: 'alto', f: fP },
   { g: 'Oportunidad', id: 'tel12', d: 'De las cuentas en mora el primer día hábil, % que recibió una gestión telefónica de gestor (llamada o WhatsApp) en el día hábil 1 o 2 de mora.', t: 'Llamada en los 2 primeros días hábiles de mora', r: ['tel12'], mejor: 'alto', f: fP },
   { g: 'Oportunidad', id: 'pago2', d: 'De las cuentas en mora el primer día hábil, % que ya no tenía cuota vencida el 3.er día hábil (pagaron a más tardar el 2.º día hábil de mora).', t: 'Salen de mora a más tardar el 2.º día hábil', r: ['pago2'], mejor: 'alto', f: fP },
   { g: 'Cobertura en mora', id: 'kpi2', d: 'Se cuentan los días hábiles que cada cuenta pasó en mora (hasta 15) SIN una promesa de pago vigente. De esos días, % en que la cuenta recibió 2 o más gestiones de gestor. Es la meta de intensidad: 2 gestiones por día en mora.', t: 'KPI 2 gestiones/día en mora sin promesa', c: ['dsp2', 'dsp'], mejor: 'alto', f: fP, pct: true },
-  { g: 'Cobertura en mora', id: 'sing', d: 'Mismos días hábiles en mora sin promesa vigente: % de esos días en que la cuenta no recibió ninguna gestión de gestor. Menos es mejor.', t: 'Días en mora sin promesa y sin gestión', c: ['dsp0', 'dsp'], mejor: 'bajo', f: fP, pct: true },
   { g: 'Cobertura en mora', id: 'singc', d: 'Saldo pagaré de las cuentas que estuvieron en mora y no recibieron ninguna gestión de gestor mientras estaban en mora (días hábiles 1 a 15).', t: 'Cuentas en mora sin ninguna gestión', n: 'sing', mejor: 'bajo' },
   { g: 'Cobertura en mora', id: 'gxc', d: 'Gestiones de gestor hechas mientras la cuenta estaba en mora (días hábiles 1 a 15) ÷ cuentas en mora (ponderado por saldo pagaré).', t: 'Gestiones de cobro por cuenta en mora', c: ['gm', 'm1c'], mejor: 'alto', f: v => fDec(v, 1) },
   { g: 'Promesas', id: 'pxc', d: 'Promesas de pago registradas mientras la cuenta estaba en mora ÷ cuentas en mora (ponderado por saldo pagaré).', t: 'Promesas por cuenta en mora', c: ['prn', 'm1c'], mejor: 'alto', f: v => fDec(v, 1) },
@@ -853,7 +856,7 @@ function segAgregar(D, idx) {
   const k = S.seg.k, by = S.seg.by, col = c => D.datos[`${k}_${c}`];
   const W = D.datos.w, meses = D.meta.meses;
   const m = Object.fromEntries(meses.map(x => [x, { n: 0, w: 0, incl: 0, inclw: 0, pdn: 0, pdw: 0, r: {}, c: {}, sing: 0, singw: 0, visg: 0, visc: 0, visw: 0, m1c: 0 }]));
-  const cols = new Set(['pd', 'm5', 'prev', 'm1', 'gd1', 'tel12', 'pago2', 'sintel', 'r_pred', 'r_fila', 'r_gestor', 'r_ref', 'r_vis'].filter(c => col(c)));
+  const cols = new Set(['pd', 'solo', 'm5', 'prev', 'm1', 'gd1', 'tel12', 'pago2', 'sintel', 'r_pred', 'r_fila', 'r_gestor', 'r_ref', 'r_vis'].filter(c => col(c)));
   const sumas = ['dsp2', 'dsp', 'dsp0', 'gm', 'prn', 'prplazo', 'prok', 'prev_n', 'gca', 'dca', 'visrpc', 'visg'];
   const C = Object.fromEntries([...cols, ...sumas, 'incl', 'sing', 'm1'].map(c => [c, col(c)]));
   for (const i of idx) {
@@ -911,7 +914,7 @@ function pintarSeguimiento(D) {
   };
   kpis([
     kp('inc', `${PD} ${fMes(actual)} (al ${fDia(D.meta.hoy)})`), kp('m5', 'Mora a 5 días hábiles'),
-    kp('gd1', 'Gestionadas el 1.er día de mora'), kp('sing', 'Días en mora sin gestión'),
+    kp('gd1', 'Gestionadas el 1.er día de mora'), D.datos[`${k}_solo`] ? kp('solo', 'Paga Solo') : kp('m1', 'En mora el 1.er día hábil'),
     kp('cumple', 'Promesas cumplidas'), conReglas ? kp('r_gestor', 'Regla: gestión de gestor') : kp('pago2', 'Salen de mora al 2.º día hábil'),
   ]);
 
@@ -926,7 +929,7 @@ function pintarSeguimiento(D) {
     + `<article class="graf ancho"><div class="cab"><h3>Indicadores de gestión de la primera cuota</h3><span class="small muted">${nota}. Verde: mejor mes; rojo: peor mes cerrado; fondo ámbar: peor que el promedio; fondo rojo: mes en curso peor que el promedio.</span></div><div class="tabla-caja seg-tabla" id="segTabla"></div></article>`
     + tarjeta('gSegM5', 'Mora a 5 días hábiles', 'Comparable entre meses: cuotas con 6 días hábiles observados.', {})
     + tarjeta('gSegGd1', 'Gestionadas el primer día de mora', '% de las cuentas en mora al día siguiente del vencimiento.', {})
-    + tarjeta('gSegSing', 'Días en mora sin gestión', '% de los días en mora sin promesa; menos es mejor.', {})
+    + (D.datos[`${k}_solo`] ? tarjeta('gSegSolo', '% de cobranza Paga Solo', 'Saldo de las cuotas vencidas que no están en mora y nunca tuvieron una sola gestión; más es mejor.', {}) : '')
     + (conReglas ? tarjeta('gSegReg', 'Cumplimiento de las reglas de cobro FPD', 'Cuentas en mora que cumplen cada regla (cono de MCCollect).', { leyenda: [['Predictivo', SERIE[3]], ['Fila MCC', SERIE[1]], ['Gestión de gestor', SERIE[0]], ['Referencias', SERIE[2]], ['Visita', '#06255B']] }) : '')
     + tarjeta('gSegRod', 'Rodamiento de Cendoc a la fecha de corte', 'Cuotas 1PD ya vencidas según el rodamiento de Cendoc en la foto del corte.', { leyenda: ROD_ORDEN.map((t, j) => [t, ROD_COLOR[j]]) })
     + tarjeta('gSegCos', 'Mora a 5 días hábiles por mes de colocación', 'Mes de desembolso con 100 cuotas o más observadas a 5 días hábiles.', {})
@@ -939,7 +942,7 @@ function pintarSeguimiento(D) {
     extra: it => { const a = A[meses[it[0].dataIndex]]; return [`${fN(a.pdn)} de ${fN(a.incl)} cuotas vencidas en ${PD}`, `Saldo pagaré en 1PD ${fM(a.pdw)} de ${fM(a.inclw)}`, `Corte: ${fDia(corte(meses[it[0].dataIndex]))}`]; },
     clic: j => ({ mes_cobro: meses[j] }),
   });
-  for (const [id, I] of [['gSegM5', ind('m5')], ['gSegGd1', ind('gd1')], ['gSegSing', ind('sing')]]) {
+  for (const [id, I] of [['gSegM5', ind('m5')], ['gSegGd1', ind('gd1')], ...(D.datos[`${k}_solo`] ? [['gSegSolo', ind('solo')]] : [])]) {
     barrasSimples(id, etiq, meses.map(m => segValor(I, A[m])), { horizontal: false, fmt: fP, color: colores(I), extra: it => [`Promedio meses cerrados: ${fP(prom(I))}`], clic: j => ({ mes_cobro: meses[j] }) });
   }
   const RG = [['r_pred', 'Predictivo', SERIE[3]], ['r_fila', 'Fila MCC', SERIE[1]], ['r_gestor', 'Gestión de gestor', SERIE[0]], ['r_ref', 'Referencias', SERIE[2]], ['r_vis', 'Visita', '#06255B']];
@@ -1022,22 +1025,27 @@ function pintarSeguimiento(D) {
 
   // Efectividad por canal en el mes elegido
   const CAN = [['sms', 'SMS'], ['wap', 'WhatsApp'], ['llam', 'Llamada de gestor'], ['pred', 'Predictivo'], ['vis', 'Visita de campo']];
-  const ec = CAN.map(() => ({ u: 0, r: 0, p: 0, c: 0, pu: 0, pub: 0, pn: 0, pnb: 0 }));
+  const ec = CAN.map(() => ({ u: 0, r: 0, p: 0, c: 0, pu: 0, pub: 0 }));
+  const sg = { u: 0, pu: 0, pub: 0 };   // consolidado: cuentas en mora sin ninguna gestión por ningún canal
   let baseMes = 0;
   for (const i of idx) {
     if (dv(D, 'mes_cobro', i) !== mesSel || D.datos[`${k}_e_gest`][i] == null) continue;
     const w = W[i] || 0, pago = D.datos[`${k}_e_pago`][i]; baseMes += w;
+    if (D.datos[`${k}_e_gest`][i] !== 1) { sg.u += w; if (pago != null) { sg.pub += w; if (pago === 1) sg.pu += w; } }
     CAN.forEach(([c], j) => {
       const u = D.datos[`${k}_k_${c}_u`][i] === 1, a = ec[j];
-      if (u) { a.u += w; if (D.datos[`${k}_k_${c}_r`][i] === 1) a.r += w; if (D.datos[`${k}_k_${c}_p`][i] === 1) a.p += w; if (D.datos[`${k}_k_${c}_c`][i] === 1) a.c += w; }
-      if (pago != null) { if (u) { a.pub += w; if (pago === 1) a.pu += w; } else { a.pnb += w; if (pago === 1) a.pn += w; } }
+      if (!u) return;
+      a.u += w; if (D.datos[`${k}_k_${c}_r`][i] === 1) a.r += w; if (D.datos[`${k}_k_${c}_p`][i] === 1) a.p += w; if (D.datos[`${k}_k_${c}_c`][i] === 1) a.c += w;
+      if (pago != null) { a.pub += w; if (pago === 1) a.pu += w; }
     });
   }
-  $('segCanales').innerHTML = `<table><thead><tr><th>Canal</th><th class="num">Saldo en mora gestionado</th><th class="num">% del saldo en mora</th><th class="num">RPC por este canal</th><th class="num">Promesa por este canal</th><th class="num">Promesa cumplida</th><th class="num">Salió de mora · con el canal</th><th class="num">· sin el canal</th></tr></thead><tbody>`
-    + CAN.map(([, t], j) => { const a = ec[j], dif = pct(a.pu, a.pub) - pct(a.pn, a.pnb);
+  const refSG = pct(sg.pu, sg.pub);
+  $('segCanales').innerHTML = `<table><thead><tr><th>Canal</th><th class="num">Saldo en mora gestionado</th><th class="num">% del saldo en mora</th><th class="num">RPC por este canal</th><th class="num">Promesa por este canal</th><th class="num">Promesa cumplida</th><th class="num">Salió de mora</th></tr></thead><tbody>`
+    + CAN.map(([, t], j) => { const a = ec[j], v = pct(a.pu, a.pub), dif = v - refSG;
       return `<tr><td>${t}</td><td class="num">${fM(a.u)}</td><td class="num">${fP(pct(a.u, baseMes))}</td><td class="num">${fP(pct(a.r, a.u))}</td><td class="num">${fP(pct(a.p, a.u))}</td><td class="num">${fP(pct(a.c, a.p))}</td>`
-        + `<td class="num ${isFinite(dif) && dif > 0 ? 'mejor' : isFinite(dif) && dif < 0 ? 'peor' : ''}">${fP(pct(a.pu, a.pub))}</td><td class="num">${fP(pct(a.pn, a.pnb))}</td></tr>`; }).join('')
-    + `</tbody></table><p class="small muted">RPC, promesa y cumplida se miden sobre el saldo gestionado por ese canal. SMS y predictivo no registran conversación (sin RPC ni promesa): su aporte se ve en «Salió de mora». Las cuentas más difíciles reciben más canales, por eso un canal con «con el canal» menor que «sin el canal» no significa que empeore el pago.</p>`;
+        + `<td class="num ${isFinite(dif) && dif > 0 ? 'mejor' : isFinite(dif) && dif < 0 ? 'peor' : ''}">${fP(v)}</td></tr>`; }).join('')
+    + `<tr class="total"><td>Sin ninguna gestión (ningún canal)</td><td class="num">${fM(sg.u)}</td><td class="num">${fP(pct(sg.u, baseMes))}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${fP(refSG)}</td></tr>`
+    + `</tbody></table><p class="small muted">Cada canal se mide solo sobre las cuentas que gestionó; una cuenta con varios canales aparece en cada uno. La última fila es un solo dato consolidado: cuentas en mora que no recibieron ninguna gestión por ningún canal, y sirve de comparación (verde: el canal sale de mora más que las no gestionadas; rojo: menos). SMS y predictivo no registran conversación (sin RPC ni promesa). Las cuentas más difíciles reciben más canales (visita, predictivo), por eso su % puede ser menor sin que el canal empeore el pago.</p>`;
 
   // Tabla de indicadores
   let html = `<table><thead><tr><th>Indicador</th>${etiq.map(e => `<th class="num">${e}</th>`).join('')}<th class="num">Promedio cerrados</th></tr></thead><tbody>`;
@@ -1109,15 +1117,19 @@ function pintarCosecha1PD(D) {
   const T = new Map();
   for (const i of ip) {
     const c = dv(P, 'mes_desembolso', i); if (!c || c === 'SIN DATO') continue;
-    const a = T.get(c) || { n: 0, w: 0, i: Array(7).fill(0), p: Array(7).fill(0) }; T.set(c, a);
+    const a = T.get(c) || { n: 0, w: 0, i: Array(7).fill(0), p: Array(7).fill(0), s: Array(7).fill(0) }; T.set(c, a);
     const w = P.datos.w[i] || 0; a.n++; a.w += w;
-    for (let x = 1; x <= 6; x++) if (P.datos[`${k}${x}_i`]?.[i] === 1) { a.i[x] += w; if (P.datos[`${k}${x}_p`][i] === 1) a.p[x] += w; }
+    for (let x = 1; x <= 6; x++) if (P.datos[`${k}${x}_i`]?.[i] === 1) { a.i[x] += w; if (P.datos[`${k}${x}_p`][i] === 1) a.p[x] += w; if (P.datos[`${k}${x}_s`]?.[i] === 1) a.s[x] += w; }
   }
   // una cosecha solo muestra el xPD si todas sus cuotas x caen dentro de los 13 meses con fotos diarias
   const completa = (c, x) => difMes(sumaMes(c, x - 1), M0) >= 0;
   const cosPD = [...T.keys()].filter(c => completa(c, 6)).filter(c => T.get(c).n >= minimoRelativo([...T.values()].map(a => a.n))).sort();
   const valPD = (c, x) => { const a = T.get(c); return completa(c, x) && a.i[x] ? pct(a.p[x], a.i[x]) : null; };
   const rango = [0, 1, 2, 3, 4, 5, 6].map(x => { const v = cosPD.map(c => valPD(c, x)).filter(y => y != null); return v.length ? [Math.min(...v), Math.max(...v)] : [0, 0]; });
+  const conSolo = !!P?.datos?.[`${k}1_s`];
+  const valSolo = (c, x) => { const a = T.get(c); return completa(c, x) && a.i[x] ? pct(a.s[x], a.i[x]) : null; };
+  const rangoS = [0, 1, 2, 3, 4, 5, 6].map(x => { const v = cosPD.map(c => valSolo(c, x)).filter(y => y != null); return v.length ? [Math.min(...v), Math.max(...v)] : [0, 0]; });
+  const totSolo = x => { let p = 0, i = 0; for (const c of cosPD) if (completa(c, x)) { p += T.get(c).s[x]; i += T.get(c).i[x]; } return pct(p, i); };
   const totPD = x => { let p = 0, i = 0; for (const c of cosPD) if (completa(c, x)) { p += T.get(c).p[x]; i += T.get(c).i[x]; } return pct(p, i); };
 
   // ---- Matriz cosecha × mes de cobro del PD elegido
@@ -1164,6 +1176,7 @@ function pintarCosecha1PD(D) {
 
   $('graficos').innerHTML =
     `<article class="graf ancho"><div class="cab"><h3>Tabla de PD's por cosecha</h3><span class="small muted">% del saldo pagaré en 1PD a 6PD sobre el saldo de las cuotas ya vencidas (${k === 'd' ? `cada mes medido a su día ${dHoy}` : 'al cierre de cada mes'}). Verde: mejor de la columna; rojo: peor. En blanco: la cuota aún no vence o cae antes de las fotos diarias (desde ${fMes(M0)}).</span></div><div class="tabla-caja seg-tabla" id="pdsTabla"></div></article>`
+    + (conSolo ? `<article class="graf ancho"><div class="cab"><h3>% de cobranza Paga Solo por cosecha</h3><span class="small muted">% del saldo pagaré de las cuotas 1 a 6 ya vencidas que al corte no están en mora y nunca tuvieron una sola gestión (ni SMS, ni predictivo, ni gestor, ni visita) desde 12 días antes del vencimiento (${k === 'd' ? `cada mes medido a su día ${dHoy}` : 'al cierre de cada mes'}). Más es mejor: verde = mejor de la columna; rojo = peor.</span></div><div class="tabla-caja seg-tabla" id="soloTabla"></div></article>` : '')
     + `<article class="graf ancho"><div class="cab"><h3>${PD} de cada cosecha según el mes en que cicla la cuota ${nPD}</h3><span class="small muted">Celda: % del saldo pagaré en ${PD} sobre el saldo de las cuotas ${nPD} ya vencidas de esa cosecha en ese mes de cobro. Debajo, el saldo que cicla ese mes. Total: el ${PD} de toda la cosecha.</span></div><div class="tabla-caja seg-tabla" id="cosTabla"></div></article>`
     + [1, 2, 3].map(ct => `<article class="graf ancho"><div class="cab"><h3>Embudo de cobranza ${PD} · corte ${ct}</h3><span class="small muted">Corte ${ct}: cuotas ${nPD} que vencen ${ct === 1 ? (nPD === 1 ? 'en el mismo mes de la cosecha' : `${nPD - 1} ${nPD === 2 ? 'mes' : 'meses'} después del mes de la cosecha`) : `${nPD - 1 + ct - 1} meses después del mes de la cosecha`} (debajo de cada cosecha, el mes de cobro). Saldo pagaré de las cuentas en mora al día hábil siguiente del vencimiento y lo que lograron las gestiones hasta el corte. En gris, el % sobre el paso anterior.</span></div><div class="tabla-caja seg-tabla" id="cosEmb${ct}"></div></article>`).join('')
     + `<article class="graf ancho"><div class="cab"><h3>Intensidad de cobro por cosecha y corte · ${PD}</h3><span class="small muted">Cuentas en mora al día hábil siguiente del vencimiento, ponderadas por saldo pagaré. Gestiones de gestor (sin SMS ni predictivo) mientras la cuenta estuvo en mora, hasta 15 días hábiles.</span></div><div class="tabla-caja seg-tabla" id="cosInt"></div></article>`
@@ -1179,6 +1192,16 @@ function pintarCosecha1PD(D) {
   const tN = cosPD.reduce((s, c) => s + T.get(c).n, 0), tW = cosPD.reduce((s, c) => s + T.get(c).w, 0);
   $('pdsTabla').innerHTML = hp + `<tr class="total"><td>Total</td><td class="num">${fN(tN)}</td><td class="num">${fM(tW)}</td>${[1, 2, 3, 4, 5, 6].map(x => `<td class="num">${fP(totPD(x))}</td>`).join('')}</tr></tbody></table>`
     + (cosPD.length ? '' : '<p class="small muted">Sin datos con los filtros aplicados.</p>');
+
+  if (conSolo) {
+    let hs = `<table><thead><tr><th>Cosecha</th><th class="num">Cuentas</th><th class="num">Monto pagaré</th>${[1, 2, 3, 4, 5, 6].map(x => `<th class="num">Cuota ${x}</th>`).join('')}</tr></thead><tbody>`;
+    for (const c of cosPD) {
+      const a = T.get(c);
+      hs += `<tr><td><b>${fMes(c)}</b></td><td class="num">${fN(a.n)}</td><td class="num">${fM(a.w)}</td>${[1, 2, 3, 4, 5, 6].map(x => { const v = valSolo(c, x);
+        return `<td class="num heat${v == null ? '' : ' clic'}" style="${v == null ? '' : calor(rangoS[x][1] + rangoS[x][0] - v, ...rangoS[x])}"${v == null ? '' : ` data-cos="${c}" title="${esc(`${fM(a.s[x])} pagó solo de ${fM(a.i[x])} vencido`)}"`}>${v == null ? '' : fP(v)}</td>`; }).join('')}</tr>`;
+    }
+    $('soloTabla').innerHTML = hs + `<tr class="total"><td>Total</td><td class="num">${fN(tN)}</td><td class="num">${fM(tW)}</td>${[1, 2, 3, 4, 5, 6].map(x => `<td class="num">${fP(totSolo(x))}</td>`).join('')}</tr></tbody></table>`;
+  }
 
   // Matriz del PD elegido
   let h = `<table><thead><tr><th>Cosecha</th>${meses.map(m => `<th class="num">${fMes(m)}${m === actual ? '*' : ''}</th>`).join('')}<th class="num">Total cosecha</th></tr></thead><tbody>`;
@@ -1232,7 +1255,7 @@ document.addEventListener('change', e => { if (e.target.id === 'segMes') { S.seg
 // ---------- Pestaña Cono de cobranza ----------
 function filasCono(T) {
   const f = {};
-  for (const c of Object.keys(CONO_DIMS)) if (S.cono[c]) f[c] = S.cono[c];
+  for (const c of Object.keys(CONO_DIMS)) if (S.cono[c] && S.cono[c].length) f[c] = S.cono[c];
   const idx = filas(T, f);
   const fecha = T.dic.dia ? 'dia' : 'fecha_promesa';
   if (fecha === 'dia' && (S.cono.desde || S.cono.hasta)) {
@@ -1244,7 +1267,7 @@ function filasCono(T) {
 function pintarCono(D) {
   const G = D.gestiones, P = D.promesas;
   const ig = filasCono(G);
-  const fP_ = {}; for (const c of ['tipo_cartera', 'usuario']) if (S.cono[c]) fP_[c] = S.cono[c];
+  const fP_ = {}; for (const c of ['tipo_cartera', 'usuario']) if (S.cono[c] && S.cono[c].length) fP_[c] = S.cono[c];
   const ip = filas(P, fP_);
   const nuevo = () => ({ n: 0, gestionada: 0, contacto: 0, rpc: 0, promesa: 0 });
   const suma = (a, i) => { a.n += mv(G, 'n', i); for (const k of ['gestionada', 'contacto', 'rpc', 'promesa']) a[k] += mv(G, k, i); };
