@@ -831,15 +831,17 @@ const SEG_IND = [
 // Términos Paga Solo (definidos por Riesgo el 25-nov-2026). Todos sobre el saldo pagaré de las cuotas ya vencidas que al
 // corte no están en mora; «previa» = desde 12 días antes hasta el día del vencimiento.
 const PS_TERMINOS = [
-  ['p', '%PSP', 'Paga Solo Puro', 'Sin ninguna gestión (ni SMS, ni predictivo, ni gestor), ni previa ni posterior al vencimiento, y sin mora al corte. Pudo pagar antes, el propio día o después del vencimiento.', 'navy'],
-  ['v', '%PSV', 'Paga Solo Vencimiento', 'Sin ninguna gestión previa ni el día del vencimiento y pagó antes o el propio día del vencimiento.', 'cielo'],
-  ['s', '%PSPS', 'Paga Solo Posterior', 'Sin ninguna gestión antes de pagar (ni previa ni el día del vencimiento) y pagó después del día del vencimiento.', ''],
-  ['gp', '%PSGP', 'Paga Solo Gestión Preventiva', 'Con gestión preventiva automática (SMS o predictivo) previa o el día del vencimiento, sin gestión de gestor, y pagó antes o el propio día del vencimiento.', 'naranja'],
-  ['gg', '%PSGPG', 'Paga Solo Gestión Preventiva Gestor', 'Con gestión preventiva de un gestor (llamada, WhatsApp o visita) previa o el día del vencimiento y pagó antes o el propio día del vencimiento.', 'lima'],
+  ['gg', '%PSGPG', 'Antes o el día, con gestión de gestor', 'Con gestión preventiva de un gestor (llamada, WhatsApp o visita) previa o el día del vencimiento y pagó antes o el propio día del vencimiento.', 'lima'],
+  ['gp', '%PSGP', 'Antes o el día, con gestión preventiva', 'Con gestión preventiva automática (SMS o predictivo) previa o el día del vencimiento, sin gestión de gestor, y pagó antes o el propio día del vencimiento.', 'naranja'],
+  ['v', '%PSV', 'Antes o el día, sin gestión', 'Sin ninguna gestión previa ni el día del vencimiento y pagó antes o el propio día del vencimiento.', 'cielo'],
+  ['t', '%PSPT', 'Después del vencimiento, con gestión previa', 'Con gestión preventiva (SMS, predictivo o gestor) previa o el día del vencimiento, sin ninguna gestión después del vencimiento antes de pagar, y pagó después del día del vencimiento.', ''],
+  ['s', '%PSPS', 'Después del vencimiento, sin gestión', 'Sin ninguna gestión antes de pagar (ni previa ni el día del vencimiento) y pagó después del día del vencimiento.', 'navy'],
 ];
-SEG_IND.splice(1, 0, ...PS_TERMINOS.map(([c, t, nom, d]) => ({ g: 'Paga Solo', id: `ps_${c}`, d: `${d} % del saldo pagaré de las cuotas ya vencidas.`, t: `${t} ${nom}`, r: [`ps_${c}`], mejor: 'alto', f: fP })));
+SEG_IND.splice(1, 0, ...PS_TERMINOS.map(([c, t, nom, d]) => ({ g: 'Paga Solo', id: `ps_${c}`, d: `${d} % del saldo pagaré de las cuotas ya vencidas.`, t: `${t} ${nom}`, r: [`ps_${c}`], mejor: 'alto', f: fP })),
+  { g: 'Paga Solo', id: 'ps_tot', d: 'Paga Solo según Riesgo: %PSV + %PSGP + %PSGPG (pagó antes o el propio día del vencimiento) + %PSPS + %PSPT (pagó después del vencimiento sin gestión de cobro posterior al vencimiento). % del saldo pagaré de las cuotas ya vencidas.', t: 'Paga Solo', suma: [['ps_v', 1], ['ps_gp', 1], ['ps_gg', 1], ['ps_s', 1], ['ps_t', 1]], mejor: 'alto', f: fP },
+  { g: 'Paga Solo', id: 'ps_ges', d: 'Pagó después del vencimiento y tuvo al menos una gestión de cobro después del vencimiento antes de pagar. Es 100% − el nPD − Paga Solo. % del saldo pagaré de las cuotas ya vencidas.', t: 'Paga con gestión', base: 100, suma: [['pd', -1], ['ps_v', -1], ['ps_gp', -1], ['ps_gg', -1], ['ps_s', -1], ['ps_t', -1]], mejor: 'alto', f: fP });
 const fDec = (v, d) => (v == null || !isFinite(v) ? '—' : v.toLocaleString('es-NI', { minimumFractionDigits: d, maximumFractionDigits: d }));
-const PS_COL = ['#06255B', SERIE[1], SERIE[3], SERIE[2], SERIE[0]];
+const PS_COL = [SERIE[0], SERIE[2], SERIE[3], '#8E5BB5', '#06255B'];
 const ROD_ORDEN = ['MEJORA', 'MANTIENE', 'DESMEJORA', 'CANCELADO', 'SIN DATO'];
 const ROD_COLOR = [SERIE[0], SERIE[1], SERIE[2], GRIS, '#E6E8EC'];
 
@@ -887,6 +889,11 @@ function segAgregar(D, idx) {
 function segValor(I, a) {
   if (!a) return null;
   if (I.r) { const r = a.r[I.r[0]]; return r && r[1] ? (100 * r[0]) / r[1] : null; }
+  if (I.suma) {   // base + Σ factor × % de cada columna (todas sobre las mismas cuotas vencidas)
+    let s = I.base || 0;
+    for (const [c, f] of I.suma) { const r = a.r[c]; if (!r || !r[1]) return null; s += f * 100 * r[0] / r[1]; }
+    return s;
+  }
   if (I.c) {
     const [nu, de] = I.c, pick = c => (c === 'm1c' ? a.m1c : (a.c[c] || [0, 0])[I.sinPeso ? 1 : 0]);
     const den = pick(de); return den ? (I.pct ? 100 : 1) * pick(nu) / den : null;
@@ -901,7 +908,7 @@ function pintarSeguimiento(D) {
   S.seg.by = 'w';   // la gerencia de riesgo lo mira en saldo pagaré
   const { n: nPD, mc, U, PD, tx } = medicion(D);
   const conReglas = !!D.datos[`${S.seg.k}_r_pred`];
-  const INDS = SEG_IND.filter(I => !(I.r || []).some(c => !D.datos[`${S.seg.k}_${c}`]));
+  const INDS = SEG_IND.filter(I => ![...(I.r || []), ...(I.suma || []).map(x => x[0])].some(c => !D.datos[`${S.seg.k}_${c}`]));
   const meses = D.meta.meses, actual = meses[meses.length - 1], cerrados = meses.slice(0, -1);
   const idx = filas(D, filtrosActivos());
   const A = segAgregar(D, idx);
@@ -923,17 +930,18 @@ function pintarSeguimiento(D) {
     return [l, segFmt(I)(v), `promedio ${cerrados.length} meses al mismo corte: ${segFmt(I)(ref)} · ${peor(I, v, ref) ? 'peor' : 'igual o mejor'}`, peor(I, v, ref) ? 'rojo' : 'verde'];
   };
   kpis([
-    kp('inc', `${PD} ${fMes(actual)} (al ${fDia(D.meta.hoy)})`), kp('m5', 'Mora a 5 días hábiles'),
-    kp('gd1', 'Gestionadas el 1.er día de mora'), D.datos[`${k}_ps_p`] ? kp('ps_p', '%PSP Paga Solo Puro') : kp('m1', 'En mora el 1.er día hábil'),
-    kp('cumple', 'Promesas cumplidas'), conReglas ? kp('r_gestor', 'Regla: gestión de gestor') : kp('pago2', 'Salen de mora al 2.º día hábil'),
+    kp('inc', `${PD} ${fMes(actual)} (al ${fDia(D.meta.hoy)})`),
+    ...(D.datos[`${k}_ps_t`] ? [kp('ps_tot', 'Paga Solo'), kp('ps_ges', 'Paga con gestión')]
+      : [kp('m1', 'En mora el 1.er día hábil'), conReglas ? kp('r_gestor', 'Regla: gestión de gestor') : kp('pago2', 'Salen de mora al 2.º día hábil')]),
+    kp('gd1', 'Gestionadas el 1.er día de mora'), kp('m5', 'Mora a 5 días hábiles'), kp('cumple', 'Promesas cumplidas'),
   ]);
 
   const etiq = meses.map(m => fMes(m) + (m === actual ? '*' : ''));
   const colores = I => meses.map(m => { const v = segValor(I, A[m]), ref = prom(I); return m === actual ? (peor(I, v, ref) ? '#EE232E' : SERIE[1]) : peor(I, v, ref) ? SERIE[2] : SERIE[1]; });
   const nota = k === 'd' ? `Cada mes medido a su día ${dHoy}` : 'Cada mes medido a su cierre';
-  const psTiles = !D.datos[`${k}_ps_p`] ? '' : `<article class="graf ancho"><div class="cab"><h3>Paga Solo · ${fMes(actual)}${'*'}</h3><span class="small muted">${nota}. % del saldo pagaré de las cuotas ya vencidas que al corte no están en mora. «Previa» = desde 12 días antes hasta el día del vencimiento. Debajo, el promedio de los ${cerrados.length} meses anteriores al mismo corte.</span></div><div class="kpis">`
+  const psTiles = !D.datos[`${k}_ps_v`] ? '' : `<article class="graf ancho"><div class="cab"><h3>Paga Solo · ${fMes(actual)}${'*'}</h3><span class="small muted">${nota}. % del saldo pagaré de las cuotas ya vencidas que al corte no están en mora. «Previa» = desde 12 días antes hasta el día del vencimiento. Debajo, el promedio de los ${cerrados.length} meses anteriores al mismo corte.</span></div><div class="kpis">`
     + PS_TERMINOS.map(([c, t, nom, d, color]) => { const I = ind(`ps_${c}`), v = segValor(I, A[actual]), ref = prom(I);
-      return `<div class="kpi ${color}" title="${esc(d)}"><div class="l">${t} · ${nom}</div><div class="v">${fP(v)}</div><div class="s">promedio ${fP(ref)}</div></div>`; }).join('') + '</div></article>';
+      return `<div class="kpi ${color || ''}" title="${esc(d)}"><div class="l">${t} · ${nom}</div><div class="v">${fP(v)}</div><div class="s">promedio ${fP(ref)}</div></div>`; }).join('') + '</div></article>';
   $('graficos').innerHTML = psTiles + tx(
     tarjeta('gSegInc', 'Incumplimiento 1PD por mes', `${nota}: cuotas con 1 o más cuotas vencidas en la foto de MCCollect del corte, sobre las cuotas ya vencidas. Ámbar: peor que el promedio de los meses cerrados; rojo: el mes en curso peor que ese promedio.`, { ancho: true })
     + `<article class="graf ancho"><div class="cab"><h3>Embudo de cobranza de las cuentas en mora</h3><span class="small muted">Saldo pagaré de las cuentas que amanecieron en mora al día siguiente del vencimiento, según lo que lograron las gestiones desde el día 1 de mora hasta el corte. En gris, el % sobre el paso anterior.</span></div><div class="tabla-caja seg-tabla" id="segEmbudo"></div></article>`
@@ -942,7 +950,7 @@ function pintarSeguimiento(D) {
     + `<article class="graf ancho"><div class="cab"><h3>Indicadores de gestión de la primera cuota</h3><span class="small muted">${nota}. Verde: mejor mes; rojo: peor mes cerrado; fondo ámbar: peor que el promedio; fondo rojo: mes en curso peor que el promedio.</span></div><div class="tabla-caja seg-tabla" id="segTabla"></div></article>`
     + tarjeta('gSegM5', 'Mora a 5 días hábiles', 'Comparable entre meses: cuotas con 6 días hábiles observados.', {})
     + tarjeta('gSegGd1', 'Gestionadas el primer día de mora', '% de las cuentas en mora al día siguiente del vencimiento.', {})
-    + (D.datos[`${k}_ps_p`] ? tarjeta('gSegPS', 'Paga Solo por mes', 'Los cinco términos de Paga Solo sobre el saldo de las cuotas ya vencidas. Clic en un punto para filtrar el mes.', { ancho: true, leyenda: PS_TERMINOS.map(([, t, nom], j) => [`${t} ${nom}`, PS_COL[j]]) }) : '')
+    + (D.datos[`${k}_ps_v`] ? tarjeta('gSegPS', 'Paga Solo por mes', 'Los términos de Paga Solo sobre el saldo de las cuotas ya vencidas. Clic en un punto para filtrar el mes.', { ancho: true, leyenda: PS_TERMINOS.map(([, t, nom], j) => [`${t} ${nom}`, PS_COL[j]]) }) : '')
     + (conReglas ? tarjeta('gSegReg', 'Cumplimiento de las reglas de cobro FPD', 'Cuentas en mora que cumplen cada regla (cono de MCCollect).', { leyenda: [['Predictivo', SERIE[3]], ['Fila MCC', SERIE[1]], ['Gestión de gestor', SERIE[0]], ['Referencias', SERIE[2]], ['Visita', '#06255B']] }) : '')
     + tarjeta('gSegRod', 'Rodamiento de Cendoc a la fecha de corte', 'Cuotas 1PD ya vencidas según el rodamiento de Cendoc en la foto del corte.', { leyenda: ROD_ORDEN.map((t, j) => [t, ROD_COLOR[j]]) })
     + tarjeta('gSegCos', 'Mora a 5 días hábiles por mes de colocación', 'Mes de desembolso con 100 cuotas o más observadas a 5 días hábiles.', {})
@@ -958,7 +966,7 @@ function pintarSeguimiento(D) {
   for (const [id, I] of [['gSegM5', ind('m5')], ['gSegGd1', ind('gd1')], ]) {
     barrasSimples(id, etiq, meses.map(m => segValor(I, A[m])), { horizontal: false, fmt: fP, color: colores(I), extra: it => [`Promedio meses cerrados: ${fP(prom(I))}`], clic: j => ({ mes_cobro: meses[j] }) });
   }
-  if (D.datos[`${k}_ps_p`]) lineas('gSegPS', etiq, PS_TERMINOS.map(([c, t, nom], j) => ({ t: `${t} ${nom}`, c: PS_COL[j], v: meses.map(m => segValor(ind(`ps_${c}`), A[m])) })), { fmt: fP, clic: j => ({ mes_cobro: meses[j] }) });
+  if (D.datos[`${k}_ps_v`]) lineas('gSegPS', etiq, PS_TERMINOS.map(([c, t, nom], j) => ({ t: `${t} ${nom}`, c: PS_COL[j], v: meses.map(m => segValor(ind(`ps_${c}`), A[m])) })), { fmt: fP, clic: j => ({ mes_cobro: meses[j] }) });
   const RG = [['r_pred', 'Predictivo', SERIE[3]], ['r_fila', 'Fila MCC', SERIE[1]], ['r_gestor', 'Gestión de gestor', SERIE[0]], ['r_ref', 'Referencias', SERIE[2]], ['r_vis', 'Visita', '#06255B']];
   if (conReglas) lineas('gSegReg', etiq, RG.map(([id, t, c]) => ({ t, c, v: meses.map(m => segValor(ind(id), A[m])) })), { fmt: fP, clic: j => ({ mes_cobro: meses[j] }) });
 
@@ -1133,14 +1141,14 @@ function pintarCosecha1PD(D) {
     const c = dv(P, 'mes_desembolso', i); if (!c || c === 'SIN DATO') continue;
     const a = T.get(c) || { n: 0, w: 0, i: Array(7).fill(0), p: Array(7).fill(0), s: Array(7).fill(0) }; T.set(c, a);
     const w = P.datos.w[i] || 0; a.n++; a.w += w;
-    for (let x = 1; x <= 6; x++) if (P.datos[`${k}${x}_i`]?.[i] === 1) { a.i[x] += w; if (P.datos[`${k}${x}_p`][i] === 1) a.p[x] += w; if (P.datos[`${k}${x}_${S.seg.ps || 'p'}`]?.[i] === 1) a.s[x] += w; }
+    for (let x = 1; x <= 6; x++) if (P.datos[`${k}${x}_i`]?.[i] === 1) { a.i[x] += w; if (P.datos[`${k}${x}_p`][i] === 1) a.p[x] += w; if (P.datos[`${k}${x}_s${S.seg.ps || 'gg'}`]?.[i] === 1) a.s[x] += w; }
   }
   // una cosecha solo muestra el xPD si todas sus cuotas x caen dentro de los 13 meses con fotos diarias
   const completa = (c, x) => difMes(sumaMes(c, x - 1), M0) >= 0;
   const cosPD = [...T.keys()].filter(c => completa(c, 6)).filter(c => T.get(c).n >= minimoRelativo([...T.values()].map(a => a.n))).sort();
   const valPD = (c, x) => { const a = T.get(c); return completa(c, x) && a.i[x] ? pct(a.p[x], a.i[x]) : null; };
   const rango = [0, 1, 2, 3, 4, 5, 6].map(x => { const v = cosPD.map(c => valPD(c, x)).filter(y => y != null); return v.length ? [Math.min(...v), Math.max(...v)] : [0, 0]; });
-  const conSolo = !!P?.datos?.[`${k}1_p`], PSel = PS_TERMINOS.find(x => x[0] === (S.seg.ps || 'p'));
+  const conSolo = !!P?.datos?.[`${k}1_sv`], PSel = PS_TERMINOS.find(x => x[0] === (S.seg.ps || 'gg')) || PS_TERMINOS[0];
   const valSolo = (c, x) => { const a = T.get(c); return completa(c, x) && a.i[x] ? pct(a.s[x], a.i[x]) : null; };
   const rangoS = [0, 1, 2, 3, 4, 5, 6].map(x => { const v = cosPD.map(c => valSolo(c, x)).filter(y => y != null); return v.length ? [Math.min(...v), Math.max(...v)] : [0, 0]; });
   const totSolo = x => { let p = 0, i = 0; for (const c of cosPD) if (completa(c, x)) { p += T.get(c).s[x]; i += T.get(c).i[x]; } return pct(p, i); };
