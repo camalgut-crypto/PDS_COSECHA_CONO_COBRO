@@ -26,12 +26,13 @@ const PESTANAS = [
   { id: 'cartera_activa', t: 'Cartera Activa', roles: ['admin', 'gerencia', 'cobro'], h: ['cuentas'] },
   { id: 'primeros_pagos', t: 'Primeros Pagos', roles: TODOS, h: ['cuentas'] },
   { id: 'pp_seguimiento', t: 'Primeros Pagos – Seguimiento', roles: TODOS, h: ['pds'] },
+  { id: 'pp_vence', t: 'Primeros Pagos – Por vencimiento', roles: TODOS, h: ['pds'] },
   { id: 'pp_mora_cuota', t: 'Mora por cuota', roles: TODOS, h: ['pds'] },
   { id: 'pp_cosecha', t: 'Primeros Pagos – Cosecha', roles: TODOS, h: ['pds'] },
   { id: 'cono', t: 'Cono de cobranza', roles: ['admin', 'gerencia'], h: ['cuentas', 'pds'] },
 ];
 const misPestanas = () => PESTANAS.filter(p => p.h.includes(HERR) && p.roles.includes(rol()));
-const PP_TABS = ['pp_seguimiento', 'pp_mora_cuota', 'pp_cosecha'];
+const PP_TABS = ['pp_seguimiento', 'pp_vence', 'pp_mora_cuota', 'pp_cosecha'];
 document.title = MARCA.nombre;
 const slug = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .trim().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');
@@ -184,7 +185,7 @@ async function bajarArchivo(nombre) {
   }
   return (S.arch[nombre] = d);
 }
-const archivoDe = tab => (tab === 'pp_seguimiento' || tab === 'pp_cosecha' ? `pp_seg_${S.seg.pd}` : tab === 'pp_mora_cuota' ? `pp_mc_${S.mc}` : tab);
+const archivoDe = tab => (tab === 'pp_vence' ? 'pp_seg_1' : tab === 'pp_seguimiento' || tab === 'pp_cosecha' ? `pp_seg_${S.seg.pd}` : tab === 'pp_mora_cuota' ? `pp_mc_${S.mc}` : tab);
 async function bajar(tab) {
   const d = await bajarArchivo(archivoDe(tab));
   if (tab === 'pp_cosecha') d.pds = await bajarArchivo('pp_pds');
@@ -864,15 +865,15 @@ document.addEventListener('click', async e => {
   await abrir(S.tab);
 });
 
-function segAgregar(D, idx) {
+function segAgregar(D, idx, claves = D.meta.meses, grp = i => [dv(D, 'mes_cobro', i)]) {
   const k = S.seg.k, by = S.seg.by, col = c => D.datos[`${k}_${c}`];
-  const W = D.datos.w, meses = D.meta.meses;
-  const m = Object.fromEntries(meses.map(x => [x, { n: 0, w: 0, incl: 0, inclw: 0, pdn: 0, pdw: 0, r: {}, c: {}, sing: 0, singw: 0, visg: 0, visc: 0, visw: 0, m1c: 0 }]));
+  const W = D.datos.w;
+  const m = Object.fromEntries(claves.map(x => [x, { n: 0, w: 0, incl: 0, inclw: 0, pdn: 0, pdw: 0, r: {}, c: {}, sing: 0, singw: 0, visg: 0, visc: 0, visw: 0, m1c: 0 }]));
   const cols = new Set(['pd', ...PS_TERMINOS.map(([c]) => `ps_${c}`), 'm5', 'prev', 'm1', 'gd1', 'tel12', 'pago2', 'sintel', 'r_pred', 'r_fila', 'r_gestor', 'r_ref', 'r_vis'].filter(c => col(c)));
   const sumas = ['dsp2', 'dsp', 'dsp0', 'gm', 'prn', 'prplazo', 'prok', 'prev_n', 'gca', 'dca', 'visrpc', 'visg'];
   const C = Object.fromEntries([...cols, ...sumas, 'incl', 'sing', 'm1'].map(c => [c, col(c)]));
-  for (const i of idx) {
-    const a = m[dv(D, 'mes_cobro', i)]; if (!a) continue;
+  for (const i of idx) for (const g of grp(i)) {
+    const a = m[g]; if (!a) continue;
     const w = by === 'n' ? 1 : (W[i] || 0);
     a.n++; a.w += W[i] || 0;
     if (C.incl[i]) { a.incl++; a.inclw += W[i] || 0; }
@@ -903,6 +904,91 @@ function segValor(I, a) {
   return null;
 }
 const segFmt = I => (I.f || (I.n ? fM : fN));
+
+// ---------- Piezas del seguimiento que sirven por mes o por fecha de vencimiento ----------
+const ETAPAS = [['e_gest', 'Con alguna gestión', 'Cualquier registro en el cono: SMS, predictivo, llamada, WhatsApp o visita.'],
+  ['e_int', 'Con intento', 'Gestión marcada como intento (gestionada) en el catálogo del cono.'],
+  ['e_con', 'Con contacto', 'Se logró contacto con alguien (titular o tercero).'],
+  ['e_rpc', 'Con RPC', 'Se habló con el titular (contacto con la persona correcta).'],
+  ['e_prom', 'Con promesa de pago', 'Se registró una promesa con fecha.'],
+  ['e_cump', 'Promesa cumplida', 'Hubo un pago entre la promesa y la fecha prometida + 1 día hábil.'],
+  ['e_pago', 'Salió de mora al corte', 'Al corte ya no tiene cuotas vencidas (pagó).']];
+// Embudo: saldo pagaré de las cuentas en mora por columna (grp(i) = columnas a las que suma la fila)
+function segEmbudo(D, idx, k, claves, etiq, grp) {
+  const W = D.datos.w, EM = claves.map(() => ({ base: 0 })), pos = new Map(claves.map((c, j) => [c, j]));
+  for (const i of idx) {
+    if (D.datos[`${k}_e_gest`][i] == null) continue;
+    for (const g of grp(i)) {
+      const j = pos.get(g); if (j == null) continue;
+      const w = W[i] || 0, a = EM[j]; a.base += w;
+      for (const [c] of ETAPAS) if (D.datos[`${k}_${c}`][i] === 1) a[c] = (a[c] || 0) + w;
+    }
+  }
+  let he = `<table><thead><tr><th>Paso</th>${etiq.map(e => `<th class="num">${e}</th>`).join('')}</tr></thead><tbody>`
+    + `<tr><td>Saldo pagaré en mora (día 1)</td>${EM.map(a => `<td class="num">${fM(a.base)}</td>`).join('')}</tr>`;
+  ETAPAS.forEach(([c, t, d], n) => {
+    he += `<tr><td title="${esc(d)}">${t} <span class="info">ⓘ</span><div class="desc">${esc(d)}</div></td>${EM.map(a => {
+      const v = a[c] || 0, prev = n === 0 || c === 'e_pago' ? a.base : a[ETAPAS[n - 1][0]] || 0;
+      return `<td class="num" title="${esc(fM(v))}">${fP(pct(v, a.base))}${n && c !== 'e_pago' ? `<div class="sub">${fP(pct(v, prev))}</div>` : ''}</td>`;
+    }).join('')}</tr>`;
+  });
+  $('segEmbudo').innerHTML = he + '</tbody></table>';
+  return EM;
+}
+// Efectividad por canal de las filas que cumplen dentro(i)
+function segCanales(D, idx, k, dentro) {
+  const W = D.datos.w;
+  const CAN = [['sms', 'SMS'], ['wap', 'WhatsApp'], ['llam', 'Llamada de gestor'], ['pred', 'Predictivo'], ['vis', 'Visita de campo']];
+  const ec = CAN.map(() => ({ u: 0, r: 0, p: 0, c: 0, pu: 0, pub: 0 }));
+  const sg = { u: 0, pu: 0, pub: 0 };   // consolidado: cuentas en mora sin ninguna gestión por ningún canal
+  let baseMes = 0;
+  for (const i of idx) {
+    if (!dentro(i) || D.datos[`${k}_e_gest`][i] == null) continue;
+    const w = W[i] || 0, pago = D.datos[`${k}_e_pago`][i]; baseMes += w;
+    if (D.datos[`${k}_e_gest`][i] !== 1) { sg.u += w; if (pago != null) { sg.pub += w; if (pago === 1) sg.pu += w; } }
+    CAN.forEach(([c], j) => {
+      const u = D.datos[`${k}_k_${c}_u`][i] === 1, a = ec[j];
+      if (!u) return;
+      a.u += w; if (D.datos[`${k}_k_${c}_r`][i] === 1) a.r += w; if (D.datos[`${k}_k_${c}_p`][i] === 1) a.p += w; if (D.datos[`${k}_k_${c}_c`][i] === 1) a.c += w;
+      if (pago != null) { a.pub += w; if (pago === 1) a.pu += w; }
+    });
+  }
+  const refSG = pct(sg.pu, sg.pub);
+  $('segCanales').innerHTML = `<table><thead><tr><th>Canal</th><th class="num">Saldo en mora gestionado</th><th class="num">% del saldo en mora</th><th class="num">RPC por este canal</th><th class="num">Promesa por este canal</th><th class="num">Promesa cumplida</th><th class="num">Salió de mora</th></tr></thead><tbody>`
+    + CAN.map(([, t], j) => { const a = ec[j], v = pct(a.pu, a.pub), dif = v - refSG;
+      return `<tr><td>${t}</td><td class="num">${fM(a.u)}</td><td class="num">${fP(pct(a.u, baseMes))}</td><td class="num">${fP(pct(a.r, a.u))}</td><td class="num">${fP(pct(a.p, a.u))}</td><td class="num">${fP(pct(a.c, a.p))}</td>`
+        + `<td class="num ${isFinite(dif) && dif > 0 ? 'mejor' : isFinite(dif) && dif < 0 ? 'peor' : ''}">${fP(v)}</td></tr>`; }).join('')
+    + `<tr class="total"><td>Sin ninguna gestión (ningún canal)</td><td class="num">${fM(sg.u)}</td><td class="num">${fP(pct(sg.u, baseMes))}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${fP(refSG)}</td></tr>`
+    + `</tbody></table><p class="small muted">Cada canal se mide solo sobre las cuentas que gestionó; una cuenta con varios canales aparece en cada uno. La última fila es un solo dato consolidado: cuentas en mora que no recibieron ninguna gestión por ningún canal, y sirve de comparación (verde: el canal sale de mora más que las no gestionadas; rojo: menos). SMS y predictivo no registran conversación (sin RPC ni promesa). Las cuentas más difíciles reciben más canales (visita, predictivo), por eso su % puede ser menor sin que el canal empeore el pago.</p>`;
+}
+// Tabla de indicadores: una columna por clave. o.cur = columna "en curso" (fondo rojo si peor que la referencia);
+// o.refT = título de la columna de referencia (sin él no hay columna); o.excluir = claves que no compiten por mejor/peor (el total)
+function segTablaInd(D, A, INDS, claves, etiq, o) {
+  const fuera = new Set([o.cur, ...(o.excluir || [])]);
+  const nCol = claves.length + (o.refT ? 2 : 1), vacia = o.refT ? '<td></td>' : '';
+  let html = `<table><thead><tr><th>Indicador</th>${etiq.map(e => `<th class="num">${e}</th>`).join('')}${o.refT ? `<th class="num">${o.refT}</th>` : ''}</tr></thead><tbody>`;
+  let grupo = '';
+  for (const I of INDS) {
+    if (I.g !== grupo) { grupo = I.g; html += `<tr class="grupo"><td colspan="${nCol}">${grupo}</td></tr>`; }
+    const vals = claves.map(m => segValor(I, A[m])), ref = o.prom(I), cer = vals.filter((v, j) => v != null && !fuera.has(claves[j]));
+    const mejorV = cer.length ? (I.mejor === 'bajo' ? Math.min(...cer) : Math.max(...cer)) : null;
+    const peorV = cer.length ? (I.mejor === 'bajo' ? Math.max(...cer) : Math.min(...cer)) : null;
+    const f = segFmt(I);
+    html += `<tr><td title="${esc(I.d || '')}">${I.t} <span class="info">ⓘ</span><div class="desc">${esc(I.d || '')}</div></td>${vals.map((v, j) => {
+      const c = claves[j], cls = [];
+      if (o.excluir?.includes(c)) return `<td class="num tot">${v == null ? '—' : f(v)}</td>`;
+      const cur = c === o.cur;
+      if (v != null && !cur && v === mejorV) cls.push('mejor'); else if (v != null && !cur && v === peorV) cls.push('peor');
+      if (o.peor(I, v, ref)) cls.push(cur ? 'fondo-rojo' : 'fondo-ambar');
+      return `<td class="num ${cls.join(' ')}">${v == null ? '—' : f(v)}</td>`;
+    }).join('')}${o.refT ? `<td class="num tot">${ref == null ? '—' : f(ref)}</td>` : ''}</tr>`;
+  }
+  html += `<tr class="grupo"><td colspan="${nCol}">Base</td></tr>`
+    + `<tr><td>Saldo pagaré de las cuotas ya vencidas al corte</td>${claves.map(m => `<td class="num">${S.seg.by === 'n' ? fN(A[m].incl) : fM(A[m].inclw)}</td>`).join('')}${vacia}</tr>`
+    + `<tr><td>Saldo pagaré en 1PD al corte</td>${claves.map(m => `<td class="num">${S.seg.by === 'n' ? fN(A[m].pdn) : fM(A[m].pdw)}</td>`).join('')}${vacia}</tr>`
+    + (o.base || []).map(([t, fn]) => `<tr><td>${t}</td>${claves.map(m => `<td class="num">${fn(m)}</td>`).join('')}${vacia}</tr>`).join('');
+  $('segTabla').innerHTML = medicion(D).tx(html + '</tbody></table>');
+}
 
 function pintarSeguimiento(D) {
   S.seg.by = 'w';   // la gerencia de riesgo lo mira en saldo pagaré
@@ -1015,29 +1101,7 @@ function pintarSeguimiento(D) {
 
 
   // Embudo por mes (saldo pagaré de las cuentas en mora)
-  const ETAPAS = [['e_gest', 'Con alguna gestión', 'Cualquier registro en el cono: SMS, predictivo, llamada, WhatsApp o visita.'],
-    ['e_int', 'Con intento', 'Gestión marcada como intento (gestionada) en el catálogo del cono.'],
-    ['e_con', 'Con contacto', 'Se logró contacto con alguien (titular o tercero).'],
-    ['e_rpc', 'Con RPC', 'Se habló con el titular (contacto con la persona correcta).'],
-    ['e_prom', 'Con promesa de pago', 'Se registró una promesa con fecha.'],
-    ['e_cump', 'Promesa cumplida', 'Hubo un pago entre la promesa y la fecha prometida + 1 día hábil.'],
-    ['e_pago', 'Salió de mora al corte', 'Al corte ya no tiene cuotas vencidas (pagó).']];
-  const W = D.datos.w, EM = meses.map(() => ({ base: 0 }));
-  for (const i of idx) {
-    const j = meses.indexOf(dv(D, 'mes_cobro', i)); if (j < 0) continue;
-    if (D.datos[`${k}_e_gest`][i] == null) continue;
-    const w = W[i] || 0, a = EM[j]; a.base += w;
-    for (const [c] of ETAPAS) if (D.datos[`${k}_${c}`][i] === 1) a[c] = (a[c] || 0) + w;
-  }
-  let he = `<table><thead><tr><th>Paso</th>${etiq.map(e => `<th class="num">${e}</th>`).join('')}</tr></thead><tbody>`
-    + `<tr><td>Saldo pagaré en mora (día 1)</td>${EM.map(a => `<td class="num">${fM(a.base)}</td>`).join('')}</tr>`;
-  ETAPAS.forEach(([c, t, d], n) => {
-    he += `<tr><td title="${esc(d)}">${t} <span class="info">ⓘ</span><div class="desc">${esc(d)}</div></td>${EM.map(a => {
-      const v = a[c] || 0, prev = n === 0 || c === 'e_pago' ? a.base : a[ETAPAS[n - 1][0]] || 0;
-      return `<td class="num" title="${esc(fM(v))}">${fP(pct(v, a.base))}${n && c !== 'e_pago' ? `<div class="sub">${fP(pct(v, prev))}</div>` : ''}</td>`;
-    }).join('')}</tr>`;
-  });
-  $('segEmbudo').innerHTML = he + '</tbody></table>';
+  const EM = segEmbudo(D, idx, k, meses, etiq, i => [dv(D, 'mes_cobro', i)]);
   lineas('gSegConv', etiq, [
     { t: 'Con RPC', c: SERIE[1], v: EM.map(a => pct(a.e_rpc || 0, a.base)) },
     { t: 'Promesa sobre RPC', c: SERIE[2], v: EM.map(a => pct(a.e_prom || 0, a.e_rpc || 0)) },
@@ -1046,50 +1110,11 @@ function pintarSeguimiento(D) {
   ], { fmt: fP, extra: it => { const a = EM[it[0].dataIndex]; return [`Saldo en mora ${fM(a.base)} · con RPC ${fM(a.e_rpc || 0)}`, `Prometido ${fM(a.e_prom || 0)} · cumplido ${fM(a.e_cump || 0)} · salió de mora ${fM(a.e_pago || 0)}`]; }, clic: j => ({ mes_cobro: meses[j] }) });
 
   // Efectividad por canal en el mes elegido
-  const CAN = [['sms', 'SMS'], ['wap', 'WhatsApp'], ['llam', 'Llamada de gestor'], ['pred', 'Predictivo'], ['vis', 'Visita de campo']];
-  const ec = CAN.map(() => ({ u: 0, r: 0, p: 0, c: 0, pu: 0, pub: 0 }));
-  const sg = { u: 0, pu: 0, pub: 0 };   // consolidado: cuentas en mora sin ninguna gestión por ningún canal
-  let baseMes = 0;
-  for (const i of idx) {
-    if (dv(D, 'mes_cobro', i) !== mesSel || D.datos[`${k}_e_gest`][i] == null) continue;
-    const w = W[i] || 0, pago = D.datos[`${k}_e_pago`][i]; baseMes += w;
-    if (D.datos[`${k}_e_gest`][i] !== 1) { sg.u += w; if (pago != null) { sg.pub += w; if (pago === 1) sg.pu += w; } }
-    CAN.forEach(([c], j) => {
-      const u = D.datos[`${k}_k_${c}_u`][i] === 1, a = ec[j];
-      if (!u) return;
-      a.u += w; if (D.datos[`${k}_k_${c}_r`][i] === 1) a.r += w; if (D.datos[`${k}_k_${c}_p`][i] === 1) a.p += w; if (D.datos[`${k}_k_${c}_c`][i] === 1) a.c += w;
-      if (pago != null) { a.pub += w; if (pago === 1) a.pu += w; }
-    });
-  }
-  const refSG = pct(sg.pu, sg.pub);
-  $('segCanales').innerHTML = `<table><thead><tr><th>Canal</th><th class="num">Saldo en mora gestionado</th><th class="num">% del saldo en mora</th><th class="num">RPC por este canal</th><th class="num">Promesa por este canal</th><th class="num">Promesa cumplida</th><th class="num">Salió de mora</th></tr></thead><tbody>`
-    + CAN.map(([, t], j) => { const a = ec[j], v = pct(a.pu, a.pub), dif = v - refSG;
-      return `<tr><td>${t}</td><td class="num">${fM(a.u)}</td><td class="num">${fP(pct(a.u, baseMes))}</td><td class="num">${fP(pct(a.r, a.u))}</td><td class="num">${fP(pct(a.p, a.u))}</td><td class="num">${fP(pct(a.c, a.p))}</td>`
-        + `<td class="num ${isFinite(dif) && dif > 0 ? 'mejor' : isFinite(dif) && dif < 0 ? 'peor' : ''}">${fP(v)}</td></tr>`; }).join('')
-    + `<tr class="total"><td>Sin ninguna gestión (ningún canal)</td><td class="num">${fM(sg.u)}</td><td class="num">${fP(pct(sg.u, baseMes))}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">${fP(refSG)}</td></tr>`
-    + `</tbody></table><p class="small muted">Cada canal se mide solo sobre las cuentas que gestionó; una cuenta con varios canales aparece en cada uno. La última fila es un solo dato consolidado: cuentas en mora que no recibieron ninguna gestión por ningún canal, y sirve de comparación (verde: el canal sale de mora más que las no gestionadas; rojo: menos). SMS y predictivo no registran conversación (sin RPC ni promesa). Las cuentas más difíciles reciben más canales (visita, predictivo), por eso su % puede ser menor sin que el canal empeore el pago.</p>`;
+  segCanales(D, idx, k, i => dv(D, 'mes_cobro', i) === mesSel);
 
   // Tabla de indicadores
-  let html = `<table><thead><tr><th>Indicador</th>${etiq.map(e => `<th class="num">${e}</th>`).join('')}<th class="num">Promedio cerrados</th></tr></thead><tbody>`;
-  let grupo = '';
-  for (const I of INDS) {
-    if (I.g !== grupo) { grupo = I.g; html += `<tr class="grupo"><td colspan="${meses.length + 2}">${grupo}</td></tr>`; }
-    const vals = meses.map(m => segValor(I, A[m])), ref = prom(I), cer = vals.slice(0, -1).filter(v => v != null);
-    const mejorV = cer.length ? (I.mejor === 'bajo' ? Math.min(...cer) : Math.max(...cer)) : null;
-    const peorV = cer.length ? (I.mejor === 'bajo' ? Math.max(...cer) : Math.min(...cer)) : null;
-    const f = segFmt(I);
-    html += `<tr><td title="${esc(I.d || '')}">${I.t} <span class="info">ⓘ</span><div class="desc">${esc(I.d || '')}</div></td>${vals.map((v, j) => {
-      const cur = j === meses.length - 1, cls = [];
-      if (v != null && !cur && v === mejorV) cls.push('mejor'); else if (v != null && !cur && v === peorV) cls.push('peor');
-      if (peor(I, v, ref)) cls.push(cur ? 'fondo-rojo' : 'fondo-ambar');
-      return `<td class="num ${cls.join(' ')}">${v == null ? '—' : f(v)}</td>`;
-    }).join('')}<td class="num tot">${ref == null ? '—' : f(ref)}</td></tr>`;
-  }
-  html += `<tr class="grupo"><td colspan="${meses.length + 2}">Base</td></tr>`
-    + `<tr><td>Saldo pagaré de las cuotas ya vencidas al corte</td>${meses.map(m => `<td class="num">${S.seg.by === 'n' ? fN(A[m].incl) : fM(A[m].inclw)}</td>`).join('')}<td></td></tr>`
-    + `<tr><td>Saldo pagaré en 1PD al corte</td>${meses.map(m => `<td class="num">${S.seg.by === 'n' ? fN(A[m].pdn) : fM(A[m].pdw)}</td>`).join('')}<td></td></tr>`
-    + `<tr><td>Fecha de corte</td>${meses.map(m => `<td class="num">${fDia(corte(m))}</td>`).join('')}<td></td></tr>`;
-  $('segTabla').innerHTML = tx(html + '</tbody></table>');
+  segTablaInd(D, A, INDS, meses, etiq, { prom, peor, cur: actual, refT: 'Promedio cerrados',
+    base: [['Fecha de corte', m => fDia(corte(m))]] });
 
   // Lista de cuentas en 1PD del mes elegido
   if (veTablas()) {
@@ -1104,6 +1129,68 @@ function pintarSeguimiento(D) {
   }
 }
 
+
+// ---------- Pestaña Primeros Pagos – Por vencimiento: el 1PD del mes, una columna por fecha de vencimiento de la 1.ª cuota ----------
+// El mes en curso se mide a hoy; un mes cerrado, a su cierre. La columna Total es el mes completo (el mismo dato del Seguimiento).
+function pintarVence(D) {
+  S.seg.by = 'w';
+  const meses = D.meta.meses, actual = meses[meses.length - 1];
+  const mesSel = S.seg.mes && meses.includes(S.seg.mes) ? S.seg.mes : actual;
+  const k = mesSel === actual ? 'd' : 'c', kAnt = S.seg.k;
+  S.seg.k = k;   // segAgregar y los indicadores leen la medición de S.seg.k
+  try {
+    const idx = filas(D, filtrosActivos()), incl = D.datos[`${k}_incl`];
+    const enMes = i => dv(D, 'mes_cobro', i) === mesSel;
+    const fechas = [...new Set(idx.filter(i => enMes(i) && incl[i] === 1).map(i => dv(D, 'dia_vence', i)))].sort();
+    const claves = [...fechas, 'TOTAL'], etiq = [...fechas.map(fDia), 'Total mes'];
+    const grp = i => (enMes(i) ? [dv(D, 'dia_vence', i), 'TOTAL'] : []);
+    const A = segAgregar(D, idx, claves, grp);
+    const Am = segAgregar(D, idx);   // por mes: para comparar el total con los meses anteriores al mismo corte
+    const ind = id => SEG_IND.find(x => x.id === id);
+    const INDS = SEG_IND.filter(I => ![...(I.r || []), ...(I.suma || []).map(x => x[0])].some(c => !D.datos[`${k}_${c}`]));
+    const peor = (I, v, ref) => v != null && ref != null && (I.mejor === 'bajo' ? v > ref : v < ref);
+    const total = I => segValor(I, A.TOTAL);
+    const previos = meses.slice(0, meses.indexOf(mesSel));
+    const promMeses = I => { const v = previos.map(m => segValor(I, Am[m])).filter(x => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+    const corte = D.meta.cortes[mesSel][k === 'd' ? 'dia' : 'cierre'];
+
+    $('segCtl').hidden = false;
+    $('segCtl').innerHTML = `<label class="small segmes">Mes <select id="segMes">${meses.slice().reverse().map(m => `<option value="${m}"${m === mesSel ? ' selected' : ''}>${fMes(m)}${m === actual ? '*' : ''}</option>`).join('')}</select></label>`
+      + `<span class="small muted">Solo 1PD, en saldo pagaré. ${mesSel === actual ? `${fMes(mesSel)} medido a hoy (${fDia(D.meta.hoy)})` : `${fMes(mesSel)} medido a su cierre (${fDia(corte)})`}; una columna por cada fecha de vencimiento de la primera cuota ya vencida. Fotos: MCCollect ${fDia(D.meta.foto_mccollect)} · Cendoc ${fDia(D.meta.foto_cendoc)}. Tarjetas: total del mes; <b class="ok-txt">verde</b> = igual o mejor que el promedio de los meses anteriores al mismo corte; <b class="alerta-txt">rojo</b> = peor.</span>`;
+
+    const kp = (id, l) => {
+      const I = ind(id), v = total(I), ref = promMeses(I);
+      return [l, segFmt(I)(v), `promedio ${previos.length} meses anteriores: ${segFmt(I)(ref)} · ${peor(I, v, ref) ? 'peor' : 'igual o mejor'}`, peor(I, v, ref) ? 'rojo' : 'verde'];
+    };
+    kpis([
+      kp('inc', `1PD ${fMes(mesSel)} (al ${fDia(corte)})`),
+      ...(D.datos[`${k}_ps_t`] ? [kp('ps_tot', 'Paga Solo'), kp('ps_ges', 'Paga con gestión')] : []),
+      kp('gd1', 'Gestionadas el 1.er día de mora'), kp('m5', 'Mora a 5 días hábiles'), kp('cumple', 'Promesas cumplidas'),
+    ]);
+
+    const sinFechas = !fechas.length;
+    $('graficos').innerHTML = sinFechas ? `<p class="nota">${fMes(mesSel)} no tiene cuotas vencidas con los filtros aplicados.</p>` : (
+      tarjeta('gVenInc', `Incumplimiento 1PD por fecha de vencimiento · ${fMes(mesSel)}`, 'Saldo pagaré con 1 o más cuotas vencidas en la foto de MCCollect del corte, sobre el saldo de las cuotas que vencieron ese día. Rojo: peor que el total del mes. Clic en una barra para filtrar la fecha.', { ancho: true })
+      + (D.datos[`${k}_ps_v`] ? tarjeta('gVenPS', 'Paga Solo por fecha de vencimiento', 'Los términos de Paga Solo sobre el saldo de las cuotas que vencieron cada día. Clic en un punto para filtrar la fecha.', { ancho: true, leyenda: PS_TERMINOS.map(([, t, nom], j) => [`${t} ${nom}`, PS_COL[j]]) }) : '')
+      + `<article class="graf ancho"><div class="cab"><h3>Embudo de cobranza de las cuentas en mora</h3><span class="small muted">Saldo pagaré de las cuentas que amanecieron en mora al día siguiente del vencimiento, según lo que lograron las gestiones desde el día 1 de mora hasta el corte. En gris, el % sobre el paso anterior.</span></div><div class="tabla-caja seg-tabla" id="segEmbudo"></div></article>`
+      + `<article class="graf ancho"><div class="cab"><h3>¿Qué canal rinde más? · ${fMes(mesSel)}${mesSel === actual ? '*' : ''}</h3><span class="small muted">Todo el mes (o la fecha filtrada). Cuentas en mora (en saldo pagaré) según el canal con que se gestionaron desde el día 1 de mora. Una cuenta puede tener varios canales. «Salió de mora» compara las cuentas gestionadas por ese canal contra las que no.</span></div><div class="tabla-caja seg-tabla" id="segCanales"></div></article>`
+      + `<article class="graf ancho"><div class="cab"><h3>Indicadores de gestión de la primera cuota por fecha de vencimiento</h3><span class="small muted">Verde: mejor fecha; rojo: peor fecha; fondo ámbar: peor que el total del mes. La columna Total mes es el mismo dato del Seguimiento.</span></div><div class="tabla-caja seg-tabla" id="segTabla"></div></article>`);
+    if (sinFechas) return;
+
+    const I1 = ind('inc'), vInc = fechas.map(f => segValor(I1, A[f])), tInc = total(I1);
+    barrasSimples('gVenInc', [...etiq], [...vInc, tInc], {
+      horizontal: false, fmt: fP, color: [...vInc.map(v => (peor(I1, v, tInc) ? '#EE232E' : SERIE[1])), '#06255B'],
+      extra: it => { const a = A[claves[it[0].dataIndex]]; return [`Saldo pagaré en 1PD ${fM(a.pdw)} de ${fM(a.inclw)}`, `${fN(a.pdn)} de ${fN(a.incl)} cuotas vencidas`]; },
+      clic: j => (j < fechas.length ? { dia_vence: fechas[j] } : null),
+    });
+    if (D.datos[`${k}_ps_v`]) lineas('gVenPS', fechas.map(fDia), PS_TERMINOS.map(([c, t, nom], j) => ({ t: `${t} ${nom}`, c: PS_COL[j], v: fechas.map(f => segValor(ind(`ps_${c}`), A[f])) })), { fmt: fP, clic: j => ({ dia_vence: fechas[j] }) });
+    segEmbudo(D, idx, k, claves, etiq, grp);
+    segCanales(D, idx, k, enMes);
+    segTablaInd(D, A, INDS, claves, etiq, { prom: total, peor, cur: null, excluir: ['TOTAL'] });
+  } finally {
+    S.seg.k = kAnt;
+  }
+}
 
 // ---------- Pestaña Primeros Pagos – Cosecha: el 1PD de cada mes de desembolso, según el mes en que cicla su primera cuota ----------
 // Cosechas con muy pocas cuotas (colas de meses viejos) se ocultan; el mínimo es relativo a la cosecha más grande
@@ -1504,7 +1591,7 @@ function pintar() {
   if (!D) { $('kpis').innerHTML = $('graficos').innerHTML = ''; $('tablaCaja').hidden = true; $('armarCaja').hidden = true; $('preguntas').hidden = !CFG.IA_CLAUDE; return; }
   pintarFiltros(D);
   $('segCtl').hidden = true;
-  ({ cosecha: pintarCosecha, cartera_activa: pintarCartera, primeros_pagos: pintarPrimeros, cono: pintarCono, pp_seguimiento: pintarSeguimiento, pp_mora_cuota: pintarSeguimiento, pp_cosecha: pintarCosecha1PD })[S.tab](D);
+  ({ cosecha: pintarCosecha, cartera_activa: pintarCartera, primeros_pagos: pintarPrimeros, cono: pintarCono, pp_seguimiento: pintarSeguimiento, pp_vence: pintarVence, pp_mora_cuota: pintarSeguimiento, pp_cosecha: pintarCosecha1PD })[S.tab](D);
   if (PP_TABS.includes(S.tab)) $('tablaCaja').hidden = true;
   pintarArmar(D);
   $('btnDescargar').title = S.tab === 'cono' ? 'Descarga la base completa de créditos'
